@@ -2,6 +2,7 @@
 
 import functools
 import logging
+import re
 import time
 from enum import StrEnum
 
@@ -16,6 +17,10 @@ from .exponential_backoff import exponential_backoff
 STORAGE_KEY = "google_keep_sync"
 STORAGE_VERSION = 1
 ANDROID_ID = "0123456789abcdef"  # Default Android ID, used for OAuth token exchange
+
+# Master tokens start with "aas_et/" followed by base64 characters. Google has
+# changed their length before (223, then 243), so only require a minimum length.
+MASTER_TOKEN_PATTERN = re.compile(r"aas_et/[A-Za-z0-9+/_=-]{100,}")
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,15 +41,11 @@ class GoogleKeepAPI:
     @staticmethod
     def validate_token(token: str) -> bool:
         """Validate if the token is a valid OAuth or master token."""
-        expected_master_token_length = 223
-
         if not token:
             return False
         if token.startswith("oauth2_4/"):
             return True
-        if token.startswith("aas_et/") and len(token) == expected_master_token_length:
-            return True
-        return False
+        return MASTER_TOKEN_PATTERN.fullmatch(token) is not None
 
     def __init__(
         self,
@@ -55,8 +56,8 @@ class GoogleKeepAPI:
         """Initialize the API."""
         if token and not self.validate_token(token):
             raise ValueError(
-                "Invalid token format. Must start with 'oauth2_4/' (OAuth) or 'aas_et/'"
-                "(master, 223 chars). Got: {token[:12]}..."
+                "Invalid token format. Must start with 'oauth2_4/' (OAuth) or "
+                "'aas_et/' (master)."
             )
         self._keep = gkeepapi.Keep()
 
@@ -92,18 +93,12 @@ class GoogleKeepAPI:
     def is_oauth_token(token: str) -> bool:
         """Determine if the token is an OAuth token rather than a master token.
 
-        OAuth tokens don't start with "aas_et/" and aren't 223 characters long.
+        Any token that doesn't match MASTER_TOKEN_PATTERN is treated as OAuth.
         """
         if not token:
             return False
 
-        # Master tokens start with "aas_et/" and are 223 characters
-        master_token_length = 223
-        is_master_token = (
-            token.startswith("aas_et/") and len(token) == master_token_length
-        )
-
-        return not is_master_token
+        return MASTER_TOKEN_PATTERN.fullmatch(token) is None
 
     async def async_login_with_token(self) -> bool:
         """Log in to Google Keep using the current token (OAuth or master)."""

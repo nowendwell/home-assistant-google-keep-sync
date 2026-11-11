@@ -9,8 +9,10 @@ from custom_components.google_keep_sync.api import GoogleKeepAPI, ListCase
 
 # Constants for testing
 TEST_USERNAME = "testuser@example.com"
-# Use a valid master token format: starts with 'aas_et/' and is 223 chars
+# Use a valid master token format: starts with 'aas_et/' (223 chars, older length)
 test_master_token = "aas_et/" + "x" * 216  # 223 chars total
+# Google now issues longer master tokens
+test_master_token_243 = "aas_et/" + "x" * 236  # 243 chars total
 # Use a valid OAuth token format: starts with 'oauth2_4/'
 test_oauth_token = "oauth2_4/valid_oauth_token"
 TEST_TOKEN = test_master_token
@@ -585,17 +587,52 @@ async def test_is_oauth_token(google_keep_api):
     assert google_keep_api.is_oauth_token("") is False
     assert google_keep_api.is_oauth_token(None) is False
 
-    # Test master token (starts with "aas_et/" and is 223 chars)
-    master_token = test_master_token  # 223 chars total
-    assert google_keep_api.is_oauth_token(master_token) is False
+    # Test master tokens (start with "aas_et/", old and new lengths)
+    assert google_keep_api.is_oauth_token(test_master_token) is False
+    assert google_keep_api.is_oauth_token(test_master_token_243) is False
 
-    # Test OAuth token (doesn't start with "aas_et/" or not 223 chars)
+    # Test OAuth token (doesn't start with "aas_et/")
     oauth_token = test_oauth_token
     assert google_keep_api.is_oauth_token(oauth_token) is True
 
-    # Test token with "aas_et/" prefix but wrong length
+    # Test token with "aas_et/" prefix but too short to be a master token
     wrong_length_token = "aas_et/too_short"
     assert google_keep_api.is_oauth_token(wrong_length_token) is True
+
+
+@pytest.mark.parametrize(
+    "token,expected",
+    [
+        (test_master_token, True),
+        (test_master_token_243, True),
+        (test_oauth_token, True),
+        ("", False),
+        (None, False),
+        ("aas_et/", False),
+        ("aas_et/too_short", False),
+        ("aas_et/" + "x" * 235 + " ", False),
+        ("aas_et/" + "!" * 236, False),
+        ("not_a_token", False),
+        ("x" * 243, False),
+    ],
+)
+def test_validate_token(token, expected) -> None:
+    """Test validate_token accepts OAuth and master tokens of any sane length."""
+    assert GoogleKeepAPI.validate_token(token) is expected
+
+
+def test_init_accepts_243_char_master_token(mock_hass) -> None:
+    """Test the API can be created with a 243-character master token."""
+    api = GoogleKeepAPI(mock_hass, TEST_USERNAME, test_master_token_243)
+    assert api.token == test_master_token_243
+
+
+def test_init_invalid_token_error_hides_token(mock_hass) -> None:
+    """Test an invalid token raises an error that doesn't include the token."""
+    bad_token = "fake_secret_token_value"
+    with pytest.raises(ValueError, match="Invalid token format") as exc_info:
+        GoogleKeepAPI(mock_hass, TEST_USERNAME, bad_token)
+    assert "fake_secret" not in str(exc_info.value)
 
 
 async def test_async_login_with_token_success(google_keep_api, mock_hass):

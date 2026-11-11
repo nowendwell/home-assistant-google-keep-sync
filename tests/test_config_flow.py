@@ -6,6 +6,7 @@ import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 
+from custom_components.google_keep_sync.api import GoogleKeepAPI
 from custom_components.google_keep_sync.config_flow import (
     CannotConnectError,
     ConfigFlow,
@@ -122,6 +123,37 @@ async def test_user_form_blank_username(hass: HomeAssistant, mock_google_keep_ap
 
     assert auth_fail_result["type"] == "form"
     assert auth_fail_result["errors"] == {"base": "blank_username"}
+
+
+@pytest.mark.parametrize(
+    "token,expected_errors",
+    [
+        ("aas_et/" + "x" * 236, {}),  # 243 chars, current master token length
+        ("aas_et/" + "x" * 216, {}),  # 223 chars, older master token length
+        ("oauth2_4/fake_oauth_token", {}),
+        ("aas_et/", {"base": "invalid_token_format"}),
+        ("not_a_token", {"base": "invalid_token_format"}),
+    ],
+)
+async def test_user_form_token_format(
+    hass: HomeAssistant, mock_google_keep_api, token: str, expected_errors
+):
+    """Test the user step checks the token format with the real validator."""
+    mock_google_keep_api.validate_token = GoogleKeepAPI.validate_token
+    mock_google_keep_api.return_value.token = token
+
+    initial_form_result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        initial_form_result["flow_id"],
+        user_input={"username": "testuser@example.com", "token": token},
+    )
+
+    assert result["type"] == "form"
+    assert result["errors"] == expected_errors
+    if not expected_errors:
+        assert result["step_id"] == "options"
 
 
 async def test_user_form_missing_token(hass: HomeAssistant, mock_google_keep_api):
